@@ -31,7 +31,7 @@ Create `.streamlit/secrets.toml`:
 
 ```toml
 GEMINI_API_KEY = "your-api-key"
-# GEMINI_MODEL = "gemini-2.5-flash"   # optional override
+# GEMINI_MODEL = "gemini-3.8-flash"   # optional override
 ```
 
 **Option B – paste the key into the app's sidebar** when it runs.
@@ -55,7 +55,7 @@ streamlit run app.py
 - Scanned/image-only PDFs can't be read (ATS systems can't read them either). Use a text-based PDF or DOCX.
 - The score is an AI-based estimate, not the output of any specific commercial ATS.
 - Resume text is sent to Google's Gemini API for analysis; the app itself stores nothing.
-- If Google retires the default model, set `GEMINI_MODEL` to a current Flash model name.
+- Default model is `gemini-3.8-flash`. If it is ever retired, the app falls back to older Flash models automatically; you can also set `GEMINI_MODEL` to any current model name (see https://ai.google.dev/gemini-api/docs/models).
 
 ## Project structure
 ```
