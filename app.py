@@ -145,8 +145,20 @@ def get_secret(name: str, default: str = "") -> str:
     return os.environ.get(name, default)
 
 
-def build_user_prompt(resume_text: str, job_description: str) -> str:
-    prompt = f"<resume>\n{resume_text[:MAX_RESUME_CHARS]}\n</resume>\n"
+SCANNED_NOTE = (
+    "IMPORTANT: Automated text extraction found little or no selectable text in this PDF, so it is "
+    "probably image-based (scanned/screenshot) or uses an unreadable font encoding. Read the attached "
+    "PDF visually instead. Because ATS parsers rely on selectable text, give "
+    '"Formatting & ATS Parsability" a score of 30 or lower and include a High-priority improvement '
+    "telling the candidate to export a text-based PDF or DOCX."
+)
+
+
+def build_user_prompt(resume_text: str, job_description: str, pdf_attached: bool = False) -> str:
+    if pdf_attached:
+        prompt = f"The resume is attached as a PDF.\n{SCANNED_NOTE}\n"
+    else:
+        prompt = f"<resume>\n{resume_text[:MAX_RESUME_CHARS]}\n</resume>\n"
     if job_description.strip():
         prompt += f"\n<job_description>\n{job_description.strip()[:MAX_JD_CHARS]}\n</job_description>\n"
     else:
@@ -239,14 +251,20 @@ def is_model_not_found(exc: Exception) -> bool:
     return "404" in low or "not found" in low or "not_found" in low
 
 
-def analyze_resume(api_key: str, model: str, resume_text: str, job_description: str) -> dict:
+def analyze_resume(
+    api_key: str, model: str, resume_text: str, job_description: str, pdf_bytes: bytes = None
+) -> dict:
     client = genai.Client(api_key=api_key)
     config = types.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
         temperature=0.2,
         response_mime_type="application/json",
     )
-    contents = build_user_prompt(resume_text, job_description)
+    prompt = build_user_prompt(resume_text, job_description, pdf_attached=pdf_bytes is not None)
+    if pdf_bytes is not None:
+        contents = [types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"), prompt]
+    else:
+        contents = prompt
 
     candidates = list(dict.fromkeys([model, DEFAULT_MODEL, *FALLBACK_MODELS]))  # de-duplicated, in order
     last_error = None
@@ -260,7 +278,9 @@ def analyze_resume(api_key: str, model: str, resume_text: str, job_description: 
             last_error = exc  # model retired/renamed -> try the next one
     else:
         raise last_error
-    return normalize_result(parse_json_response(response.text))
+    result = normalize_result(parse_json_response(response.text))
+    result["read_as_image"] = pdf_bytes is not None
+    return result
 
 
 def friendly_error(exc: Exception) -> str:
@@ -294,6 +314,13 @@ def score_label(score: int):
 def render_results(result: dict):
     overall = result["overall"]
     label, icon = score_label(overall)
+
+    if result.get("read_as_image"):
+        st.warning(
+            "⚠️ No selectable text could be extracted from this PDF, so it was read visually. "
+            "Many ATS systems can't parse it and would likely see an empty resume. "
+            "Export it as a text-based PDF or DOCX for best results."
+        )
 
     st.subheader("Your ATS Score")
     c1, c2 = st.columns([1, 2])
@@ -409,17 +436,19 @@ def main():
             st.error(f"Could not read the file: {exc}")
             st.stop()
 
+        use_pdf_fallback = False
         if len(resume_text) < MIN_RESUME_CHARS:
-            st.error(
-                "Very little text could be extracted. If your resume is a scanned image or "
-                "made of images, ATS systems can't read it either — export it as a "
-                "text-based PDF or DOCX and try again."
-            )
-            st.stop()
+            if uploaded.name.lower().endswith(".pdf"):
+                use_pdf_fallback = True  # let Gemini read the PDF visually
+            else:
+                st.error("Very little text could be found in this file. Please upload a resume with more content.")
+                st.stop()
 
         try:
             with st.spinner("Analyzing with Gemini..."):
-                st.session_state["result"] = analyze_resume(api_key, model, resume_text, job_description)
+                st.session_state["result"] = analyze_resume(
+                    api_key, model, resume_text, job_description, pdf_bytes=data if use_pdf_fallback else None
+                )
         except Exception as exc:
             st.session_state.pop("result", None)
             st.error(friendly_error(exc))
