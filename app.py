@@ -23,7 +23,9 @@ from pypdf import PdfReader
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
-DEFAULT_MODEL = "gemini-2.5-flash"  # override with GEMINI_MODEL in secrets/env
+DEFAULT_MODEL = "gemini-3.8-flash"  # override with GEMINI_MODEL in secrets/env
+# Tried in order if the chosen model returns "not found" (e.g. it was retired).
+FALLBACK_MODELS = ["gemini-3.6-flash", "gemini-2.5-flash"]
 MAX_FILE_MB = 5
 MAX_RESUME_CHARS = 20_000
 MAX_JD_CHARS = 8_000
@@ -232,17 +234,32 @@ def normalize_result(data: dict) -> dict:
     }
 
 
+def is_model_not_found(exc: Exception) -> bool:
+    low = str(exc).lower()
+    return "404" in low or "not found" in low or "not_found" in low
+
+
 def analyze_resume(api_key: str, model: str, resume_text: str, job_description: str) -> dict:
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model,
-        contents=build_user_prompt(resume_text, job_description),
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            temperature=0.2,
-            response_mime_type="application/json",
-        ),
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        temperature=0.2,
+        response_mime_type="application/json",
     )
+    contents = build_user_prompt(resume_text, job_description)
+
+    candidates = list(dict.fromkeys([model, DEFAULT_MODEL, *FALLBACK_MODELS]))  # de-duplicated, in order
+    last_error = None
+    for candidate in candidates:
+        try:
+            response = client.models.generate_content(model=candidate, contents=contents, config=config)
+            break
+        except Exception as exc:
+            if not is_model_not_found(exc):
+                raise
+            last_error = exc  # model retired/renamed -> try the next one
+    else:
+        raise last_error
     return normalize_result(parse_json_response(response.text))
 
 
@@ -253,8 +270,11 @@ def friendly_error(exc: Exception) -> str:
         return "The Gemini API key looks invalid or lacks permission. Please check it."
     if "429" in low or "quota" in low or "rate limit" in low or "resource_exhausted" in low:
         return "Gemini rate limit / quota reached. Please wait a minute and try again."
-    if "404" in low or "not found" in low:
-        return "The Gemini model name was not found. Set GEMINI_MODEL to a valid model."
+    if is_model_not_found(exc):
+        return (
+            "No available Gemini model was found. Google may have retired these models - "
+            "set GEMINI_MODEL in your secrets to a current Flash model name."
+        )
     return f"Something went wrong: {msg}"
 
 
