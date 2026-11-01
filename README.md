@@ -52,7 +52,7 @@ streamlit run app.py
 4. Click **Deploy**.
 
 ## Notes
-- Scanned/image-only PDFs can't be read (ATS systems can't read them either). Use a text-based PDF or DOCX.
+- Image-based/scanned PDFs (or PDFs whose text can't be extracted) are read visually by Gemini and the app warns that real ATS systems would likely fail to parse them. Use a text-based PDF or DOCX for best results.
 - The score is an AI-based estimate, not the output of any specific commercial ATS.
 - Resume text is sent to Google's Gemini API for analysis; the app itself stores nothing.
 - Default model is `gemini-3.8-flash`. If it is ever retired, the app falls back to older Flash models automatically; you can also set `GEMINI_MODEL` to any current model name (see https://ai.google.dev/gemini-api/docs/models).
@@ -63,3 +63,4 @@ app.py            # Streamlit app
 requirements.txt  # Python dependencies
 README.md
 ```
+
